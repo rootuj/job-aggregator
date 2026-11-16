@@ -35,9 +35,10 @@ what the previous stage produced and hands off a file to the next stage.
 2. **Job Finder** (daily) → pulls raw postings from each watched company's
    ATS feed, normalizes them into one standard job format, dedups, and
    diffs against the previous run (new/unchanged/edited/gone).
-3. **Funnel** → cheap code filters first (location, keywords), then Fit
-   Quotient (still code — resume/JD keyword overlap), narrowing to the
-   top ~20 — only those go on to Job Score, where the model gets involved.
+3. **Funnel** → a cheap title-keyword pre-filter first (not location —
+   see Key decisions), then Fit Quotient (still code — resume/JD keyword
+   overlap), narrowing to the top ~20 — only those go on to Job Score,
+   where the model gets involved.
 4. **Dashboard** → a thin local web app that only *reads* the latest
    output files and displays them; no pipeline logic lives there.
 5. **Scheduler** (step 7) → triggers the daily run automatically.
@@ -53,9 +54,7 @@ and `profile.yaml` directly and following the rubric exactly (see
 
 **Not yet decided** (to be settled at the matching roadmap step, not
 guessed now):
-- Storage format for job data (flat JSON files vs. SQLite) — step 4.
 - Scheduler mechanism (macOS `launchd` vs. a simple loop) — step 7.
-- Exact shape of the MCP server's tools — step 3d.
 
 ## Key decisions
 
@@ -70,8 +69,14 @@ guessed now):
 - **Daily runs diff against the previous run**: jobs are marked new,
   unchanged, edited, or gone. A job is marked closed after 2 consecutive
   misses, and reposts are flagged.
-- **Funnel**: code-based filters first, then Fit Quotient, then Job Score
-  (model-based) on only the top ~20 candidates — to keep model usage cheap.
+- **Funnel**: a cheap title-keyword pre-filter in code, then Fit Quotient
+  (code), then Job Score (model-based) on only the top ~20 candidates —
+  to keep model usage cheap. **Location filtering is NOT done in code.**
+  `rubric.md`'s own "Location rules" require real judgment (e.g. is a
+  remote job actually restricted to a non-US country?) that simple code
+  can't reliably make — that stays entirely with the model, at Job Score
+  time. Code only ever does the cheap title pre-filter, for cost control
+  (see Architecture → Funnel).
 - **Two scores**:
   - **Fit Quotient**: keyword-overlap percentage between resume and job
     description, computed in code only, no model.
@@ -88,14 +93,15 @@ guessed now):
 
 1. *(done — see Current status)*
 2. *(done — see Current status)*
-3. **Company Finder**
+3. *(done — see Current status)* **Company Finder**
    - 3a. Python project scaffolding with `uv`
    - 3b. ATS detector
    - 3c. Company watchlist
    - 3d. First MCP server
-4. **Job Finder**: Greenhouse/Lever/Ashby feeds, a standard job format,
-   deduplication, daily comparison (new/unchanged/edited/gone)
-5. **Funnel and Job Score**
+4. *(done — see Current status)* **Job Finder**: Greenhouse/Lever/Ashby/Workday
+   feeds, a standard job format, deduplication, daily comparison
+   (new/unchanged/edited/gone)
+5. *(done — see Current status)* **Funnel and Job Score**
 6. **Dashboard** (web app, run on the user's Mac) with a Settings tab
 7. **9am scheduled run**
 8. **Fit Quotient and best-resume pick**
@@ -134,7 +140,8 @@ Job Aggregator/
         ├── watchlist.py — tracked companies (data/watchlist.json, gitignored)
         ├── mcp_server.py — MCP server exposing watchlist tools to Claude
         ├── jobs.py      — standard Job format + fetchers (Greenhouse/Lever/Ashby/Workday)
-        └── tracking.py  — daily diff (new/unchanged/edited/gone/repost), data/jobs/*.json
+        ├── tracking.py  — daily diff (new/unchanged/edited/gone/repost), data/jobs/*.json
+        └── funnel.py    — title pre-filter + Fit Quotient (reads ../profile.yaml, ../my-job-search/)
     └── tests/           — pytest suite (fakes.py stands in for the network)
 ```
 
@@ -208,7 +215,29 @@ Job Aggregator/
     closed gap in between. Together these double as an indirect
     "phantom job" signal: a listing open unusually long, or reposted
     several times, may be evergreen rather than an actively-filled role
-    — useful input for Job Score (step 5) later.
+    — useful input for Job Score later.
+- **Step 5 is done (the code half — Job Score itself needs no code, see
+  Architecture)**: the Funnel (`job_agent/src/job_agent/funnel.py`).
+  - **Discovered along the way**: `Job` never captured description text
+    at all until now — needed for Fit Quotient. Checked live rather than
+    assumed: Greenhouse needs `?content=true` added to the same list
+    call (free); Lever and Ashby already include it in the list response
+    (free); Workday's list endpoint never includes it — getting it costs
+    **one extra request per job** via a newly-found detail endpoint
+    (`fetch_workday_description`), which is why a cheap pre-filter has to
+    run before fetching descriptions, not after.
+  - **Title pre-filter**: deliberately lenient keyword-overlap check
+    against `profile.yaml`'s `target_titles` (e.g. shares the word "Head"
+    with "Head of Product" is enough to pass) — it exists only for cost
+    control, not precision. Real title/seniority precision is Job
+    Score's job (25-point criterion in `rubric.md`), not the Funnel's.
+  - **Location filtering is NOT done here** — see Key decisions.
+  - **Fit Quotient**: % of a resume's significant words found in a job's
+    description, using the union of keywords across every resume `.md`
+    file in `my-job-search/resumes/` (picking the single *best* resume
+    per job is step 8's job, not this one).
+  - Verified against real companies (Stripe, Palantir, Ramp) using the
+    real `profile.yaml` and real resumes, plus 14 new pytest tests.
 
 ---
 

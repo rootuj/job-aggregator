@@ -1,4 +1,4 @@
-from job_agent.jobs import Job, dedup_jobs, fetch_jobs
+from job_agent.jobs import Job, dedup_jobs, fetch_jobs, fetch_workday_description
 from job_agent.watchlist import Company
 from fakes import FakeClient, FakeResponse
 
@@ -17,14 +17,18 @@ def test_dedup_jobs_keeps_first_occurrence():
 def test_fetch_greenhouse_parses_real_response_shape():
     company = Company(name="Stripe", careers_url="x", ats="greenhouse", slug="stripe",
                        board_url="https://boards-api.greenhouse.io/v1/boards/stripe/jobs")
+    # content=true is appended to the SAME list call to get the description for free
+    url = company.board_url + "?content=true"
     raw = {
         "jobs": [{
             "id": 8172508, "title": "Abuse Investigator",
             "location": {"name": "Dublin"}, "absolute_url": "https://stripe.com/jobs/search?gh_jid=8172508",
             "first_published": "2026-09-03T13:32:53-04:00",
+            # real Greenhouse content is HTML-entity-escaped on top of being HTML
+            "content": "&lt;p&gt;We fight &lt;strong&gt;fraud&lt;/strong&gt;.&lt;/p&gt;",
         }]
     }
-    client = FakeClient(get_responses={company.board_url: FakeResponse(raw)})
+    client = FakeClient(get_responses={url: FakeResponse(raw)})
 
     jobs = fetch_jobs(company, client=client)
 
@@ -32,6 +36,7 @@ def test_fetch_greenhouse_parses_real_response_shape():
         external_id="8172508", company="Stripe", ats="greenhouse", title="Abuse Investigator",
         location="Dublin", url="https://stripe.com/jobs/search?gh_jid=8172508",
         posted_at="2026-09-03T13:32:53-04:00",
+        description="We fight fraud .",
     )]
 
 
@@ -55,6 +60,25 @@ def test_fetch_lever_parses_real_response_shape():
     )]
 
 
+def test_fetch_lever_combines_opening_body_and_additional_but_skips_the_duplicate_field():
+    # Lever's own `descriptionPlain` duplicates `openingPlain` (verified live
+    # against a real posting) — using it would double-count that section.
+    company = Company(name="Palantir", careers_url="x", ats="lever", slug="palantir",
+                       board_url="https://api.lever.co/v0/postings/palantir?mode=json")
+    raw = [{
+        "id": "1", "text": "Role", "categories": {}, "hostedUrl": "u", "createdAt": 1,
+        "openingPlain": "Opening text.",
+        "descriptionPlain": "Opening text.",  # duplicate of openingPlain — must be ignored
+        "descriptionBodyPlain": "Body text.",
+        "additionalPlain": "Additional text.",
+    }]
+    client = FakeClient(get_responses={company.board_url: FakeResponse(raw)})
+
+    jobs = fetch_jobs(company, client=client)
+
+    assert jobs[0].description == "Opening text.\n\nBody text.\n\nAdditional text."
+
+
 def test_fetch_ashby_parses_real_response_shape():
     company = Company(name="Ramp", careers_url="x", ats="ashby", slug="ramp",
                        board_url="https://api.ashbyhq.com/posting-api/job-board/ramp")
@@ -64,6 +88,7 @@ def test_fetch_ashby_parses_real_response_shape():
             "department": "Engineering", "location": "New York, NY (HQ)",
             "publishedAt": "2026-04-07T17:12:35.753+00:00",
             "jobUrl": "https://jobs.ashbyhq.com/ramp/34413f8d-26bf-4bbc-8ade-eb309a0e2245",
+            "descriptionPlain": "ABOUT RAMP\n\nWe build finance tools.",
         }]
     }
     client = FakeClient(get_responses={company.board_url: FakeResponse(raw)})
@@ -75,6 +100,7 @@ def test_fetch_ashby_parses_real_response_shape():
         title="Software Engineer, Security, Cloud", location="New York, NY (HQ)", department="Engineering",
         url="https://jobs.ashbyhq.com/ramp/34413f8d-26bf-4bbc-8ade-eb309a0e2245",
         posted_at="2026-04-07T17:12:35.753+00:00",
+        description="ABOUT RAMP\n\nWe build finance tools.",
     )]
 
 
@@ -146,3 +172,29 @@ def test_fetch_workday_raises_loudly_on_repeated_failure(monkeypatch):
         assert False, "expected a RuntimeError"
     except RuntimeError as exc:
         assert "500" in str(exc)
+
+
+def test_fetch_workday_description_hits_the_detail_endpoint_and_strips_html():
+    company = _workday_company()
+    job = Job(external_id="JR1", company="TestCo", ats="workday", title="Engineer", location=None,
+              url="https://testco.wd5.myworkdayjobs.com/TestCareers/job/loc/Engineer_JR1")
+    # the detail endpoint is the board_url's host, minus "/jobs", plus the job's own path
+    detail_url = "https://testco.wd5.myworkdayjobs.com/wday/cxs/testco/TestCareers/job/loc/Engineer_JR1"
+    client = FakeClient(get_responses={detail_url: FakeResponse({"jobPostingInfo": {"jobDescription": "<p>Build things.</p>"}})})
+
+    description = fetch_workday_description(job, company, client)
+
+    assert description == "Build things."
+
+
+def test_fetch_workday_description_raises_on_failure():
+    company = _workday_company()
+    job = Job(external_id="JR1", company="TestCo", ats="workday", title="Engineer", location=None,
+              url="https://testco.wd5.myworkdayjobs.com/TestCareers/job/loc/Engineer_JR1")
+    client = FakeClient(get_responses={})  # falls through to the 404 default
+
+    try:
+        fetch_workday_description(job, company, client)
+        assert False, "expected a RuntimeError"
+    except RuntimeError:
+        pass

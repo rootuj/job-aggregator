@@ -8,6 +8,8 @@ each ATS names things differently.
 
 from __future__ import annotations
 
+import html
+import re
 import time
 from dataclasses import dataclass
 from urllib.parse import urlparse
@@ -27,12 +29,26 @@ class Job:
     url: str
     department: str | None = None
     posted_at: str | None = None  # left as a raw string; formats differ per ATS
+    description: str | None = None  # plain text; None means not fetched yet (see jobs needing descriptions)
+
+
+def _html_to_text(raw_html: str) -> str:
+    """Strip tags and collapse whitespace. Unescaping first matters for
+    Greenhouse, whose `content` field is HTML-entity-escaped (&lt;p&gt;)
+    on top of being HTML — verified live, not assumed."""
+    unescaped = html.unescape(raw_html)
+    text = re.sub(r"<[^>]+>", " ", unescaped)
+    return re.sub(r"\s+", " ", text).strip()
 
 
 def _fetch_greenhouse(company: Company, client: httpx.Client) -> list[Job]:
-    data = client.get(company.board_url, timeout=10.0).json()
+    # content=true adds the full job description to this SAME list call —
+    # no extra requests, unlike Workday (see _fetch_workday_description).
+    url = company.board_url + ("&" if "?" in company.board_url else "?") + "content=true"
+    data = client.get(url, timeout=10.0).json()
     jobs = []
     for raw in data.get("jobs", []):
+        content = raw.get("content")
         jobs.append(
             Job(
                 external_id=str(raw["id"]),
@@ -42,6 +58,7 @@ def _fetch_greenhouse(company: Company, client: httpx.Client) -> list[Job]:
                 location=(raw.get("location") or {}).get("name"),
                 url=raw["absolute_url"],
                 posted_at=raw.get("first_published"),
+                description=_html_to_text(content) if content else None,
             )
         )
     return jobs
@@ -52,6 +69,14 @@ def _fetch_lever(company: Company, client: httpx.Client) -> list[Job]:
     jobs = []
     for raw in data:
         categories = raw.get("categories") or {}
+        # descriptionPlain duplicates openingPlain in Lever's own data (verified
+        # live) — combine opening + body + additional instead, to avoid double-counting.
+        description_parts = [
+            raw.get("openingPlain") or "",
+            raw.get("descriptionBodyPlain") or "",
+            raw.get("additionalPlain") or "",
+        ]
+        description = "\n\n".join(p for p in description_parts if p) or None
         jobs.append(
             Job(
                 external_id=raw["id"],
@@ -62,6 +87,7 @@ def _fetch_lever(company: Company, client: httpx.Client) -> list[Job]:
                 department=categories.get("team"),
                 url=raw["hostedUrl"],
                 posted_at=str(raw.get("createdAt", "")) or None,
+                description=description,
             )
         )
     return jobs
@@ -81,6 +107,7 @@ def _fetch_ashby(company: Company, client: httpx.Client) -> list[Job]:
                 department=raw.get("department"),
                 url=raw.get("jobUrl", ""),
                 posted_at=raw.get("publishedAt"),
+                description=raw.get("descriptionPlain"),
             )
         )
     return jobs
@@ -142,6 +169,29 @@ def _fetch_workday(company: Company, client: httpx.Client) -> list[Job]:
             break
         time.sleep(0.5)  # space out requests so large companies don't trip the rate limit
     return jobs
+
+
+def fetch_workday_description(job: Job, company: Company, client: httpx.Client) -> str | None:
+    """Fetch one Workday job's full description.
+
+    Unlike the other three ATS types, Workday's list endpoint never
+    includes description text — getting it costs one extra request PER
+    JOB. Call this only for jobs that already survived a cheaper filter
+    (see funnel.py), not for every job in a large company's list.
+    """
+    _, site = company.slug.split("/", 1)
+    host = urlparse(company.board_url).netloc
+    base_url = f"https://{host}/{site}"
+    external_path = job.url[len(base_url) :]
+    detail_url = company.board_url.removesuffix("/jobs") + external_path
+
+    response = client.get(detail_url, timeout=10.0)
+    if response.status_code != 200:
+        raise RuntimeError(
+            f"Workday detail API returned {response.status_code} for {job.title!r} at {company.name}"
+        )
+    description_html = (response.json().get("jobPostingInfo") or {}).get("jobDescription")
+    return _html_to_text(description_html) if description_html else None
 
 
 _FETCHERS = {
