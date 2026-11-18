@@ -16,6 +16,10 @@ dependencies = [
 [project.scripts]
 job-agent = "job_agent:main"
 job-agent-mcp = "job_agent.mcp_server:main"
+job-agent-daily = "job_agent.scheduled_run:main"
+job-agent-install-scheduler = "job_agent.scheduler:install"
+job-agent-uninstall-scheduler = "job_agent.scheduler:uninstall"
+job-agent-scheduler-status = "job_agent.scheduler:status"
 
 [build-system]
 requires = ["uv_build>=0.13.7,<0.14.0"]

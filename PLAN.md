@@ -41,7 +41,11 @@ what the previous stage produced and hands off a file to the next stage.
    where the model gets involved.
 4. **Dashboard** → a thin local web app that only *reads* the latest
    output files and displays them; no pipeline logic lives there.
-5. **Scheduler** (step 7) → triggers the daily run automatically.
+5. **Scheduler** → a macOS `launchd` job triggers the pipeline (fetch →
+   track → Funnel, the free code-only half) automatically every day at
+   9am. It can't trigger Job Score — that's the model reading
+   `rubric.md`, which needs Claude to actually be invoked — so scoring
+   still happens when you ask Claude to score the pending jobs.
 
 **Where the model fits in**: `job_agent` will expose an **MCP server**
 (step 3d) — the structured doorway Claude uses to call into the engine's
@@ -51,10 +55,6 @@ filtering, and deduping stay pure deterministic code. **Job Score is not
 a Python function** — the model computes it itself by reading `rubric.md`
 and `profile.yaml` directly and following the rubric exactly (see
 `CLAUDE.md`), the same way it already did before this engine existed.
-
-**Not yet decided** (to be settled at the matching roadmap step, not
-guessed now):
-- Scheduler mechanism (macOS `launchd` vs. a simple loop) — step 7.
 
 ## Key decisions
 
@@ -103,7 +103,7 @@ guessed now):
    (new/unchanged/edited/gone)
 5. *(done — see Current status)* **Funnel and Job Score**
 6. *(done — see Current status)* **Dashboard** (web app, run on the user's Mac) with a Settings tab
-7. **9am scheduled run**
+7. *(done — see Current status)* **9am scheduled run**
 8. **Fit Quotient and best-resume pick**
 9. **More sources and company discovery**
 10. **Bulk prepare** (application prep assistance across several jobs)
@@ -130,6 +130,7 @@ Job Aggregator/
 ├── setup_questions.md   — questions used to build profile.yaml
 ├── my-job-search/       — resumes + known_resumes.txt (gitignored, private)
 ├── .claude/launch.json  — lets Claude preview the dashboard dev server
+├── install.sh           — one command: deps for both projects + schedules the 9am run
 ├── dashboard/           — the web app (step 6), its OWN uv project — never
 │   │                      imports job_agent's Python, only reads its JSON/YAML
 │   ├── pyproject.toml
@@ -153,7 +154,9 @@ Job Aggregator/
         ├── tracking.py  — daily diff (new/unchanged/edited/gone/repost), data/jobs/*.json
         ├── funnel.py    — title pre-filter + Fit Quotient (reads ../profile.yaml, ../my-job-search/)
         ├── pipeline.py  — orchestrates watchlist→fetch→track→funnel, writes data/pending_scoring.json
-        └── scoring.py   — persists Job Score results the MODEL computes, data/scored_results.json
+        ├── scoring.py   — persists Job Score results the MODEL computes, data/scored_results.json
+        ├── scheduled_run.py — entry point launchd calls: runs the pipeline once, logs a summary
+        └── scheduler.py — install/uninstall the real launchd job (writes ~/Library/LaunchAgents/)
     └── tests/           — pytest suite (fakes.py stands in for the network)
 ```
 
@@ -301,6 +304,36 @@ Job Aggregator/
     `monkeypatch` — a real save was almost tested by just clicking the
     button in the browser, but the auto-mode permission system
     correctly flagged that as a destructive action on a real file).
+- **Step 7 is done**: the 9am scheduled run.
+  - **Decision made (was flagged "not yet decided")**: macOS `launchd`,
+    not a loop script — the only one of the two that satisfies "no
+    terminal after install"; a loop script would need to run forever in
+    an open terminal, which a Mac sleeping or restarting would break.
+  - **Only automates the free, code-only half** (fetch → track → Funnel,
+    via `job_agent/src/job_agent/scheduled_run.py`). Job Score can't be
+    triggered by `launchd` alone — it's the model reading `rubric.md`,
+    which needs Claude actually invoked. Scoring still happens when you
+    ask Claude to score the pending jobs; a fully automated version of
+    that would need a separately-scheduled Claude session, which is a
+    further, optional, separately-costed step, not bundled into this one.
+  - `job_agent/src/job_agent/scheduler.py` installs/removes the real
+    launchd job (writes `~/Library/LaunchAgents/com.jobaggregator.dailyrun.plist`,
+    runs via `launchctl`). Installing/removing this is a real standing
+    system change outside the project, so it was done only after asking
+    first — and the auto-mode permission system itself caught and
+    blocked an attempt to run `install.sh` directly, correctly treating
+    it as touching real system state; the user ran it themselves in
+    their own terminal instead.
+  - `install.sh` at the project root: one command that installs both
+    projects' dependencies and schedules the daily run. A true
+    double-click `.app` installer is a separate, bigger "Later" item
+    (packaging, code-signing) — this is a single terminal command, not
+    that.
+  - 5 new pytest tests for the plist-generation and install/uninstall
+    logic, with `subprocess.run` mocked and paths redirected to a temp
+    directory — none of them touch the real system. Verified for real
+    afterward with `job-agent-scheduler-status`, confirming the actual
+    installed job's `uv` path, project path, and 9:00am schedule.
 
 ---
 
