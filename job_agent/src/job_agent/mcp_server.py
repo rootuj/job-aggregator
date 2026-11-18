@@ -12,6 +12,7 @@ from dataclasses import asdict
 from mcp.server.mcpserver import MCPServer
 
 from job_agent import resume_copies
+from job_agent.discovery import add_discovered_companies, discover_from_hn, discover_from_yc
 from job_agent.pipeline import DEFAULT_PENDING_SCORING_PATH, run_pipeline
 from job_agent.scoring import record_score
 from job_agent.watchlist import Company, add_company, load_watchlist
@@ -108,6 +109,30 @@ def delete_orphaned_resume_copy(original_name: str) -> None:
     """Delete a leftover copy whose original resume no longer exists.
     Only call this after the user says yes — never on your own."""
     resume_copies.delete_orphaned_copy(original_name)
+
+
+@mcp.tool()
+def discover_companies_hn() -> dict:
+    """Discover companies from the current month's HN "Who is hiring?"
+    thread and add the ones with a detectable ATS to the watchlist.
+    Company-name extraction is best-effort (HN's "Name | ..." convention
+    isn't followed by every poster) — names that turn out not to be real
+    companies simply fail ATS detection and get skipped, not added.
+    """
+    candidates = discover_from_hn()
+    return add_discovered_companies(candidates)
+
+
+@mcp.tool()
+def discover_companies_yc(batches: list[str]) -> dict:
+    """Discover active YC companies from specific batches (e.g. ["W27",
+    "S26"]) and add the ones with a detectable ATS to the watchlist.
+    Batches must be given explicitly — ask the user which ones, or check
+    https://www.ycombinator.com/companies for current batch names rather
+    than guessing.
+    """
+    candidates = discover_from_yc(batches)
+    return add_discovered_companies(candidates)
 
 
 def main() -> None:

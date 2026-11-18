@@ -63,9 +63,13 @@ and `profile.yaml` directly and following the rubric exactly (see
 - **Sources, in order**: Greenhouse, Lever, and Ashby first; Workday also
   supported (detection added — its job API is real but unofficial:
   undocumented, unversioned, and called with POST instead of GET like the
-  other three — fetching it lands at step 4 alongside the others); VC
-  portfolio pages, HN Who's Hiring, and YC for company discovery; LinkedIn
-  last, as a private, local-only, read-only plugin that runs once a day.
+  other three — fetching it lands at step 4 alongside the others); HN
+  Who's Hiring and YC for automated company discovery (step 9, both via
+  real official/documented APIs). **VC portfolio pages are NOT an
+  automated source** — hundreds of different site layouts means parsing
+  them reliably is a judgment call, not deterministic code; ask Claude to
+  check a specific VC's portfolio page directly instead. LinkedIn last,
+  as a private, local-only, read-only plugin that runs once a day.
 - **Daily runs diff against the previous run**: jobs are marked new,
   unchanged, edited, or gone. A job is marked closed after 2 consecutive
   misses, and reposts are flagged.
@@ -105,7 +109,7 @@ and `profile.yaml` directly and following the rubric exactly (see
 6. *(done — see Current status)* **Dashboard** (web app, run on the user's Mac) with a Settings tab
 7. *(done — see Current status)* **9am scheduled run**
 8. *(done — see Current status)* **Fit Quotient and best-resume pick**
-9. **More sources and company discovery**
+9. *(done — see Current status)* **More sources and company discovery**
 10. **Bulk prepare** (application prep assistance across several jobs)
 11. **LinkedIn private plugin**
 
@@ -157,7 +161,8 @@ Job Aggregator/
         ├── scoring.py   — persists Job Score results the MODEL computes, data/scored_results.json
         ├── scheduled_run.py — entry point launchd calls: runs the pipeline once, logs a summary
         ├── scheduler.py — install/uninstall the real launchd job (writes ~/Library/LaunchAgents/)
-        └── resume_copies.py — resume copy bookkeeping (CLAUDE.md's rules); MODEL reads/writes the Markdown itself
+        ├── resume_copies.py — resume copy bookkeeping (CLAUDE.md's rules); MODEL reads/writes the Markdown itself
+        └── discovery.py — company discovery from HN Who's Hiring + YC's public APIs
     └── tests/           — pytest suite (fakes.py stands in for the network)
 ```
 
@@ -361,6 +366,41 @@ Job Aggregator/
     copies) via `scan_resumes()`, plus 14 new pytest tests for the
     bookkeeping logic and updates to the funnel/pipeline tests for the
     new per-resume shape. 75 tests passing total.
+- **Step 9 is done**: automated company discovery (`discovery.py`).
+  - **HN Who's Hiring**: uses HN's official Firebase API (no scraping,
+    no ToS concern). Finds the right monthly thread by title — the
+    `whoishiring` account posts 3 threads a month (hiring, who wants to
+    be hired, freelancer), so "most recent submission" alone wasn't
+    enough. Company-name extraction is best-effort (`"Name | field |
+    ..."` convention, not followed by every poster) — verified live
+    against the real November 2026 thread: 215 of 300 comments yielded
+    a name-shaped first field; posts that don't follow the convention
+    simply fail ATS detection later and get skipped, never silently
+    trusted as real.
+  - **YC**: uses YC's own public companies API
+    (`api.ycombinator.com/v0.1/companies`), filtered by explicit batch
+    names (e.g. `["W27"]`) — never guessed, since YC's batch-naming
+    convention could change and guessing risks silently fetching
+    nothing. Filters to `status: "Active"` only.
+  - **VC portfolio pages are explicitly NOT built as code** — see Key
+    decisions. Hundreds of different site layouts makes a generic
+    scraper unreliable; this is a judgment call for Claude to do
+    conversationally per-VC, not a deterministic pipeline.
+  - **Only adds a discovered company if an ATS is actually found** —
+    matches "dashboard never pads results": a company we can't fetch
+    jobs from is clutter, not a lead. Deduplicates against both the
+    existing watchlist and within the candidate list itself.
+  - Exposed as two MCP tools: `discover_companies_hn`,
+    `discover_companies_yc`. Verified live: YC's W27 batch (15 real
+    companies) and a deliberately small, hand-picked test set for
+    `add_discovered_companies` (one real company — Fly.io, found on
+    Lever and added — plus one already-watchlisted duplicate and one
+    fake name) rather than running full ATS detection against all 215
+    HN candidates, which would have sent on the order of a thousand
+    probe requests at Greenhouse/Lever/Ashby in one burst.
+  - 6 new pytest tests, all against faked responses. 81 tests passing
+    total. Fly.io was genuinely added to the real watchlist by this
+    testing — not yet confirmed with the user whether to keep it.
 
 ---
 
