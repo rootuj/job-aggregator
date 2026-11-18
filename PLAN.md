@@ -154,7 +154,7 @@ Job Aggregator/
         ├── ats.py       — ATS detector (Greenhouse/Lever/Ashby)
         ├── watchlist.py — tracked companies (data/watchlist.json, gitignored)
         ├── mcp_server.py — MCP server exposing watchlist tools to Claude
-        ├── jobs.py      — standard Job format + fetchers (Greenhouse/Lever/Ashby/Workday)
+        ├── jobs.py      — standard Job format + fetchers; dedup + merges same-role-different-location postings
         ├── tracking.py  — daily diff (new/unchanged/edited/gone/repost), data/jobs/*.json
         ├── funnel.py    — title pre-filter + Fit Quotient (reads ../profile.yaml, ../my-job-search/)
         ├── pipeline.py  — orchestrates watchlist→fetch→track→funnel, writes data/pending_scoring.json
@@ -432,6 +432,22 @@ Job Aggregator/
   - **Also fixed while demoing**: the dashboard's table wrapped titles
     badly on narrow viewports instead of scrolling horizontally, plus a
     stylesheet caching issue.
+- **Same-role-different-location postings now merge into one entry**
+  (`jobs.merge_location_variants`), found right after the ranking fix
+  by checking the real data further. Two real patterns, verified live:
+  Palantir posts one listing per city for the same role (e.g. "Forward
+  Deployed Software Engineer - US Government" was 2 separate postings
+  with different ids, one per city — other similar titles had up to 8);
+  Stripe posts the literal same multi-city listing twice under
+  different ids. Both now collapse to one Job with every distinct
+  location combined (`"New York, NY; Chicago, IL"`), keyed by company +
+  exact title — identical location strings collapse rather than
+  duplicating, and the lowest external_id (sorted) is kept as the
+  canonical id/url/description, so this is deterministic across runs.
+  Runs automatically inside `fetch_jobs`, right after the existing
+  exact-id dedup, so every caller (pipeline, tracking) benefits without
+  changes elsewhere. 5 new pytest tests; 93 tests passing total. Re-ran
+  the real pipeline afterward.
 
 ---
 

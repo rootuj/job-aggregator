@@ -215,6 +215,49 @@ def dedup_jobs(jobs: list[Job]) -> list[Job]:
     return deduped
 
 
+def merge_location_variants(jobs: list[Job]) -> list[Job]:
+    """Merge postings that are the same role, just posted separately per
+    location — same company + exact title, different external_id. Found
+    live: some companies (e.g. Palantir) post one listing per city for
+    the same role; others (e.g. Stripe) post the literal same multi-city
+    listing twice under different ids. Both collapse into one Job whose
+    location lists every distinct location, in external_id order (the
+    canonical id — lowest, sorted — decides which one's url/description
+    survive, so this is deterministic across runs).
+    """
+    groups: dict[tuple[str, str], list[Job]] = {}
+    for job in jobs:
+        groups.setdefault((job.company, job.title), []).append(job)
+
+    merged = []
+    for group in groups.values():
+        if len(group) == 1:
+            merged.append(group[0])
+            continue
+
+        ordered = sorted(group, key=lambda j: j.external_id)
+        locations = []
+        for job in ordered:
+            if job.location and job.location not in locations:
+                locations.append(job.location)
+
+        canonical = ordered[0]
+        merged.append(
+            Job(
+                external_id=canonical.external_id,
+                company=canonical.company,
+                ats=canonical.ats,
+                title=canonical.title,
+                location="; ".join(locations) if locations else None,
+                url=canonical.url,
+                department=canonical.department,
+                posted_at=canonical.posted_at,
+                description=canonical.description,
+            )
+        )
+    return merged
+
+
 def fetch_jobs(company: Company, client: httpx.Client | None = None) -> list[Job]:
     """Fetch and normalize every open job for one watchlisted company."""
     fetcher = _FETCHERS.get(company.ats or "")
@@ -224,7 +267,8 @@ def fetch_jobs(company: Company, client: httpx.Client | None = None) -> list[Job
     owns_client = client is None
     client = client or httpx.Client()
     try:
-        return dedup_jobs(fetcher(company, client))
+        jobs = dedup_jobs(fetcher(company, client))
+        return merge_location_variants(jobs)
     finally:
         if owns_client:
             client.close()

@@ -1,4 +1,4 @@
-from job_agent.jobs import Job, dedup_jobs, fetch_jobs, fetch_workday_description
+from job_agent.jobs import Job, dedup_jobs, fetch_jobs, fetch_workday_description, merge_location_variants
 from job_agent.watchlist import Company
 from fakes import FakeClient, FakeResponse
 
@@ -12,6 +12,53 @@ def test_dedup_jobs_keeps_first_occurrence():
     deduped = dedup_jobs(jobs)
     assert [j.external_id for j in deduped] == ["1", "2"]
     assert deduped[0].title == "A"
+
+
+def test_merge_location_variants_combines_same_title_different_locations():
+    jobs = [
+        Job(external_id="b", company="X", ats="lever", title="FDE", location="Chicago, IL", url="u-b"),
+        Job(external_id="a", company="X", ats="lever", title="FDE", location="New York, NY", url="u-a"),
+    ]
+    merged = merge_location_variants(jobs)
+    assert len(merged) == 1
+    assert merged[0].location == "New York, NY; Chicago, IL"  # ordered by external_id ("a" before "b")
+    assert merged[0].external_id == "a"  # canonical = lowest external_id
+    assert merged[0].url == "u-a"  # url follows the canonical id
+
+
+def test_merge_location_variants_collapses_identical_location_strings():
+    # the real Stripe case: the literal same multi-city listing posted
+    # twice under different ids — must not duplicate the location text
+    jobs = [
+        Job(external_id="1", company="X", ats="greenhouse", title="FDE", location="SF, NY", url="u1"),
+        Job(external_id="2", company="X", ats="greenhouse", title="FDE", location="SF, NY", url="u2"),
+    ]
+    merged = merge_location_variants(jobs)
+    assert len(merged) == 1
+    assert merged[0].location == "SF, NY"
+
+
+def test_merge_location_variants_leaves_different_titles_alone():
+    jobs = [
+        Job(external_id="1", company="X", ats="greenhouse", title="FDE", location="NYC", url="u1"),
+        Job(external_id="2", company="X", ats="greenhouse", title="Designer", location="SF", url="u2"),
+    ]
+    merged = merge_location_variants(jobs)
+    assert len(merged) == 2
+
+
+def test_merge_location_variants_leaves_a_single_posting_alone():
+    jobs = [Job(external_id="1", company="X", ats="greenhouse", title="FDE", location="NYC", url="u1")]
+    assert merge_location_variants(jobs) == jobs
+
+
+def test_merge_location_variants_does_not_merge_across_companies():
+    jobs = [
+        Job(external_id="1", company="X", ats="greenhouse", title="FDE", location="NYC", url="u1"),
+        Job(external_id="2", company="Y", ats="greenhouse", title="FDE", location="SF", url="u2"),
+    ]
+    merged = merge_location_variants(jobs)
+    assert len(merged) == 2
 
 
 def test_fetch_greenhouse_parses_real_response_shape():
