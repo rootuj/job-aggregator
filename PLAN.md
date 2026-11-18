@@ -104,7 +104,7 @@ and `profile.yaml` directly and following the rubric exactly (see
 5. *(done — see Current status)* **Funnel and Job Score**
 6. *(done — see Current status)* **Dashboard** (web app, run on the user's Mac) with a Settings tab
 7. *(done — see Current status)* **9am scheduled run**
-8. **Fit Quotient and best-resume pick**
+8. *(done — see Current status)* **Fit Quotient and best-resume pick**
 9. **More sources and company discovery**
 10. **Bulk prepare** (application prep assistance across several jobs)
 11. **LinkedIn private plugin**
@@ -156,7 +156,8 @@ Job Aggregator/
         ├── pipeline.py  — orchestrates watchlist→fetch→track→funnel, writes data/pending_scoring.json
         ├── scoring.py   — persists Job Score results the MODEL computes, data/scored_results.json
         ├── scheduled_run.py — entry point launchd calls: runs the pipeline once, logs a summary
-        └── scheduler.py — install/uninstall the real launchd job (writes ~/Library/LaunchAgents/)
+        ├── scheduler.py — install/uninstall the real launchd job (writes ~/Library/LaunchAgents/)
+        └── resume_copies.py — resume copy bookkeeping (CLAUDE.md's rules); MODEL reads/writes the Markdown itself
     └── tests/           — pytest suite (fakes.py stands in for the network)
 ```
 
@@ -334,6 +335,32 @@ Job Aggregator/
     directory — none of them touch the real system. Verified for real
     afterward with `job-agent-scheduler-status`, confirming the actual
     installed job's `uv` path, project path, and 9:00am schedule.
+- **Step 8 is done**: Fit Quotient refinement and best-resume pick.
+  - **Fit Quotient is now per-resume, not pooled**: `funnel.load_resumes`
+    returns each resume's keywords separately (was one union across all
+    resumes); `best_fit_quotient` scores a job against every resume and
+    returns whichever fits best. Candidates now carry a `best_resume`
+    field alongside `fit_quotient`. Verified against real Stripe jobs:
+    scores rose from ~24% (pooled) to ~30% (best single resume) — picking
+    one resume instead of diluting across several genuinely changes the
+    number, not just an implementation detail.
+  - **Resume-copy-versioning system built** (`resume_copies.py`, the
+    piece flagged missing back at step 2): detects — never performs —
+    the bookkeeping `CLAUDE.md` describes: PDF/Word resumes needing a
+    Markdown copy, stale copies, resumes not yet in
+    `known_resumes.txt`, and orphaned copies. The actual reading of a
+    PDF/Word resume and writing readable Markdown stays the model's job
+    (matches "code for anything deterministic, model only for judgment"
+    — OCR/content-extraction-with-good-formatting is judgment, file
+    bookkeeping isn't). Exposed as four MCP tools: `check_resumes`,
+    `save_resume_copy`, `mark_resume_known`, `delete_orphaned_resume_copy`.
+  - `CLAUDE.md` updated — it still said "Fit Quotient... isn't built yet"
+    and told the model never to report one, both stale since step 5;
+    also pointed the "Resume copies" section at the new MCP tools.
+  - Verified the real resumes folder is currently clean (no stale/missing
+    copies) via `scan_resumes()`, plus 14 new pytest tests for the
+    bookkeeping logic and updates to the funnel/pipeline tests for the
+    new per-resume shape. 75 tests passing total.
 
 ---
 

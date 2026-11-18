@@ -14,7 +14,7 @@ from pathlib import Path
 
 import httpx
 
-from job_agent.funnel import load_profile, load_resume_keywords, run_funnel
+from job_agent.funnel import load_profile, load_resumes, run_funnel
 from job_agent.jobs import dedup_jobs, fetch_jobs
 from job_agent.tracking import diff_jobs, load_state, save_state
 from job_agent.watchlist import load_watchlist
@@ -29,7 +29,7 @@ def run_pipeline(top_n_per_company: int = 20, pending_path: Path = DEFAULT_PENDI
     to `pending_path`.
     """
     profile = load_profile()
-    resume_keywords = load_resume_keywords()
+    resumes = load_resumes()
     companies = load_watchlist()
 
     candidates = []
@@ -50,12 +50,13 @@ def run_pipeline(top_n_per_company: int = 20, pending_path: Path = DEFAULT_PENDI
             save_state(company.name, new_state)
             changes_by_id = {c.job.external_id: c for c in changes}
 
-            top = run_funnel(company, jobs, profile, resume_keywords, client, top_n=top_n_per_company)
-            for job, fit_quotient in top:
+            top = run_funnel(company, jobs, profile, resumes, client, top_n=top_n_per_company)
+            for job, best_resume, fit_quotient in top:
                 change = changes_by_id.get(job.external_id)
                 candidates.append(
                     {
                         **asdict(job),
+                        "best_resume": best_resume,
                         "fit_quotient": fit_quotient,
                         "change": change.change if change else "unchanged",
                         "repost_count": change.repost_count if change else 0,

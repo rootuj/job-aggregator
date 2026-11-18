@@ -84,24 +84,25 @@ def load_profile(path: Path = DEFAULT_PROFILE_PATH) -> dict:
     return yaml.safe_load(path.read_text()) or {}
 
 
-def load_resume_keywords(resumes_dir: Path = DEFAULT_RESUMES_DIR) -> set[str]:
-    """The union of significant words across every resume .md copy.
+def load_resumes(resumes_dir: Path = DEFAULT_RESUMES_DIR) -> dict[str, set[str]]:
+    """Each resume .md copy's significant words, keyed by filename.
 
-    Picking the single BEST-matching resume per job is step 8's job, not
-    this one — for now, Fit Quotient uses whatever any resume mentions.
+    Kept per-resume (not pooled) so Fit Quotient can report which SPECIFIC
+    resume fits a job best — step 8's "best-resume pick" — rather than a
+    single score blended across every resume you have.
     """
-    keywords: set[str] = set()
+    resumes: dict[str, set[str]] = {}
     for path in resumes_dir.glob("*.md"):
         text = path.read_text()
         lines = text.split("\n", 1)
         if lines[0].startswith("<!-- Copy of"):
             text = lines[1] if len(lines) > 1 else ""
-        keywords |= _words(text)
-    return keywords
+        resumes[path.name] = _words(text)
+    return resumes
 
 
 def fit_quotient(resume_keywords: set[str], job: Job) -> float | None:
-    """% of the resume's significant words that also appear in this job's
+    """% of one resume's significant words that also appear in this job's
     description. None if there's no description to compare against."""
     if not job.description or not resume_keywords:
         return None
@@ -110,22 +111,37 @@ def fit_quotient(resume_keywords: set[str], job: Job) -> float | None:
     return round(100 * len(overlap) / len(resume_keywords), 1)
 
 
+def best_fit_quotient(resumes: dict[str, set[str]], job: Job) -> tuple[str | None, float | None]:
+    """Fit Quotient against every resume; returns whichever one fits best.
+
+    (None, None) if there's no description or no resumes to compare.
+    """
+    best_resume: str | None = None
+    best_score: float | None = None
+    for name, keywords in resumes.items():
+        score = fit_quotient(keywords, job)
+        if score is not None and (best_score is None or score > best_score):
+            best_resume, best_score = name, score
+    return best_resume, best_score
+
+
 def run_funnel(
     company: Company,
     jobs: list[Job],
     profile: dict,
-    resume_keywords: set[str],
+    resumes: dict[str, set[str]],
     client: httpx.Client,
     top_n: int = 20,
-) -> list[tuple[Job, float]]:
-    """Title pre-filter -> backfill descriptions -> Fit Quotient -> top N.
+) -> list[tuple[Job, str | None, float | None]]:
+    """Title pre-filter -> backfill descriptions -> best-resume Fit Quotient -> top N.
 
-    Returns (job, fit_quotient) pairs, highest score first. A job with no
-    description (Fit Quotient None) sorts last, never padding the results.
+    Returns (job, best_resume, fit_quotient) triples, highest score first.
+    A job with no description (Fit Quotient None) sorts last, never
+    padding the results.
     """
     survivors = prefilter_by_title(jobs, profile.get("target_titles") or [])
     survivors = [ensure_description(job, company, client) for job in survivors]
 
-    scored = [(job, fit_quotient(resume_keywords, job)) for job in survivors]
-    scored.sort(key=lambda pair: (pair[1] is None, -(pair[1] or 0)))
+    scored = [(job, *best_fit_quotient(resumes, job)) for job in survivors]
+    scored.sort(key=lambda triple: (triple[2] is None, -(triple[2] or 0)))
     return scored[:top_n]

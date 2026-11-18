@@ -1,10 +1,11 @@
 import httpx
 
 from job_agent.funnel import (
+    best_fit_quotient,
     ensure_description,
     fit_quotient,
     load_profile,
-    load_resume_keywords,
+    load_resumes,
     prefilter_by_title,
     run_funnel,
     title_matches,
@@ -94,7 +95,7 @@ def test_load_profile_raises_a_clear_error_when_missing(tmp_path):
         pass
 
 
-def test_load_resume_keywords_skips_the_copy_marker_line(tmp_path):
+def test_load_resumes_skips_the_copy_marker_line_and_keys_by_filename(tmp_path):
     resumes_dir = tmp_path / "resumes"
     resumes_dir.mkdir()
     (resumes_dir / "a.md").write_text(
@@ -102,14 +103,39 @@ def test_load_resume_keywords_skips_the_copy_marker_line(tmp_path):
         "Marketplace payments leadership"
     )
 
-    keywords = load_resume_keywords(resumes_dir)
+    resumes = load_resumes(resumes_dir)
 
-    assert {"marketplace", "payments", "leadership"} <= keywords
+    assert set(resumes.keys()) == {"a.md"}
+    assert {"marketplace", "payments", "leadership"} <= resumes["a.md"]
+
+
+def test_best_fit_quotient_picks_the_higher_scoring_resume():
+    resumes = {
+        "generalist.md": {"leadership", "teamwork"},
+        "specialist.md": {"marketplace", "payments"},
+    }
+    job = _job("1", "PM", description="This role is about marketplace and payments.")
+
+    best_resume, score = best_fit_quotient(resumes, job)
+
+    assert best_resume == "specialist.md"
+    assert score == 100.0
+
+
+def test_best_fit_quotient_is_none_none_without_a_description():
+    resumes = {"a.md": {"python"}}
+    job = _job("1", "PM", description=None)
+    assert best_fit_quotient(resumes, job) == (None, None)
+
+
+def test_best_fit_quotient_is_none_none_with_no_resumes():
+    job = _job("1", "PM", description="python")
+    assert best_fit_quotient({}, job) == (None, None)
 
 
 def test_run_funnel_sorts_by_fit_quotient_and_respects_top_n():
     profile = {"target_titles": ["Product Manager"]}
-    resume_keywords = {"marketplace", "payments"}
+    resumes = {"a.md": {"marketplace", "payments"}}
     jobs = [
         _job("1", "Product Manager", description="This role touches marketplace and payments daily."),
         _job("2", "Product Manager", description="This role is about marketplace only."),
@@ -118,8 +144,9 @@ def test_run_funnel_sorts_by_fit_quotient_and_respects_top_n():
 
     with httpx.Client() as client:
         top = run_funnel(Company(name="X", careers_url="x", ats="greenhouse", slug="x", board_url="u"),
-                          jobs, profile, resume_keywords, client, top_n=1)
+                          jobs, profile, resumes, client, top_n=1)
 
     assert len(top) == 1
     assert top[0][0].external_id == "1"
-    assert top[0][1] == 100.0
+    assert top[0][1] == "a.md"
+    assert top[0][2] == 100.0

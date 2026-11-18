@@ -32,6 +32,11 @@ If `profile.yaml` doesn't exist, offer to set it up using `setup_questions.md`:
 ## Resume copies
 
 Do this check during setup and every time resumes are compared for a job.
+Use the `check_resumes` MCP tool to see what bookkeeping is needed
+(needs_copy, stale_copies, new_resumes, orphaned_copies) rather than
+scanning the folder yourself — then do the rules below, calling
+`save_resume_copy`, `mark_resume_known`, or `delete_orphaned_resume_copy`
+to record each change you make.
 
 - **Make copies:** for each Word or PDF resume in `resumes_folder`, make a Markdown copy next to it with the same name (for example, `resume.pdf` gets `resume.md`). Keep the original. Text resumes (`.txt` or `.md`) are read directly and don't need a copy.
 - **Mark copies:** start every copy with this first line, naming its original:
@@ -45,8 +50,8 @@ Do this check during setup and every time resumes are compared for a job.
 
 - **Job Score:** follow `rubric.md` exactly. Don't change the weights, thresholds or overrides on your own.
 - **Work mode:** give every job a `work_mode` label taken from the posting: Remote, Hybrid or On-site, plus the city or region (for example, "Remote (US)" or "Hybrid, Austin, TX"). Use "unknown" if the posting doesn't say. This describes the job, not the user's preferences. The dashboard shows `work_mode` for each job and can filter by it. By default it shows every job that isn't excluded by `locations.exclude`.
-- **Fit Quotient:** a separate keyword-match score that **isn't built yet**. Never estimate, invent or report one.
-- **Choosing a resume:** when asked which resume fits a job, first check the resume copies (see "Resume copies"), then compare all resumes in `resumes_folder`. If an original has a marked Markdown copy, read the copy and count the pair as one resume. Until the Fit Quotient is built, give a reasoned opinion only, with no percentage or score.
+- **Fit Quotient:** a separate keyword-match score, computed in code (`job_agent/src/job_agent/funnel.py`), not by you — it's already in each pending candidate's data (`fit_quotient` and `best_resume` fields) by the time you see it. Never estimate, invent, or recompute one yourself.
+- **Choosing a resume:** the pipeline already picks the best-fitting resume per job by Fit Quotient (`best_resume` on the candidate) — use that as your starting point rather than re-deriving it. If asked for a second opinion, first check the resume copies (see "Resume copies"), then compare all resumes in `resumes_folder`; an original with a marked Markdown copy counts as one resume with its copy.
 
 ## Honesty rules
 

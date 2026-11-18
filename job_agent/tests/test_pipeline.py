@@ -5,9 +5,9 @@ from job_agent.jobs import Job
 from job_agent.watchlist import Company
 
 
-def _setup_common(monkeypatch, target_titles=None, resume_keywords=None):
+def _setup_common(monkeypatch, target_titles=None, resumes=None):
     monkeypatch.setattr(pipeline_module, "load_profile", lambda: {"target_titles": target_titles or []})
-    monkeypatch.setattr(pipeline_module, "load_resume_keywords", lambda: resume_keywords or set())
+    monkeypatch.setattr(pipeline_module, "load_resumes", lambda: resumes or {})
     monkeypatch.setattr(pipeline_module, "load_state", lambda name: {})
     monkeypatch.setattr(pipeline_module, "save_state", lambda name, state: None)
 
@@ -17,7 +17,7 @@ def test_run_pipeline_writes_candidates_with_change_and_fit_info(tmp_path, monke
     job = Job(external_id="1", company="X", ats="greenhouse", title="Engineer", location=None,
               url="u1", description="python")
 
-    _setup_common(monkeypatch, resume_keywords={"python"})
+    _setup_common(monkeypatch, resumes={"a.md": {"python"}})
     monkeypatch.setattr(pipeline_module, "load_watchlist", lambda: [company])
     monkeypatch.setattr(pipeline_module, "fetch_jobs", lambda company, client=None: [job])
 
@@ -33,6 +33,7 @@ def test_run_pipeline_writes_candidates_with_change_and_fit_info(tmp_path, monke
     data = json.loads(pending_path.read_text())
     assert data[0]["title"] == "Engineer"
     assert data[0]["change"] == "new"
+    assert data[0]["best_resume"] == "a.md"
     assert data[0]["fit_quotient"] == 100.0
     assert data[0]["repost_count"] == 0
     assert data[0]["age_days"] == 0
@@ -56,7 +57,7 @@ def test_run_pipeline_keeps_going_after_one_companys_fetch_fails(tmp_path, monke
     job = Job(external_id="1", company="Working", ats="greenhouse", title="Engineer", location=None,
               url="u1", description="python")
 
-    _setup_common(monkeypatch, resume_keywords={"python"})
+    _setup_common(monkeypatch, resumes={"a.md": {"python"}})
     monkeypatch.setattr(pipeline_module, "load_watchlist", lambda: [broken, working])
 
     def fake_fetch(company, client=None):
