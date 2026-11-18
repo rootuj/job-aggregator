@@ -141,7 +141,9 @@ Job Aggregator/
         ├── mcp_server.py — MCP server exposing watchlist tools to Claude
         ├── jobs.py      — standard Job format + fetchers (Greenhouse/Lever/Ashby/Workday)
         ├── tracking.py  — daily diff (new/unchanged/edited/gone/repost), data/jobs/*.json
-        └── funnel.py    — title pre-filter + Fit Quotient (reads ../profile.yaml, ../my-job-search/)
+        ├── funnel.py    — title pre-filter + Fit Quotient (reads ../profile.yaml, ../my-job-search/)
+        ├── pipeline.py  — orchestrates watchlist→fetch→track→funnel, writes data/pending_scoring.json
+        └── scoring.py   — persists Job Score results the MODEL computes, data/scored_results.json
     └── tests/           — pytest suite (fakes.py stands in for the network)
 ```
 
@@ -238,6 +240,28 @@ Job Aggregator/
     per job is step 8's job, not this one).
   - Verified against real companies (Stripe, Palantir, Ramp) using the
     real `profile.yaml` and real resumes, plus 14 new pytest tests.
+- **Orchestration added** (discovered missing while starting step 6 —
+  the plan said the Dashboard reads "the latest output files," but no
+  such file existed): `job_agent/src/job_agent/pipeline.py` ties
+  watchlist → fetch → track → Funnel together into one run, writing
+  candidates (with Fit Quotient, no Job Score yet) to
+  `job_agent/data/pending_scoring.json`. One company failing to fetch
+  doesn't stop the others — it's recorded in the run's `errors` list.
+  - **Job Score flow**: `scoring.py` persists Job Score results to
+    `job_agent/data/scored_results.json`, keyed by company + external_id.
+    It never computes a score itself — three new MCP tools wire this
+    together: `run_daily_pipeline` (runs the pipeline),
+    `get_pending_scoring` (lists candidates awaiting a score), and
+    `score_job` (records one job's score after the model computes it by
+    reading `rubric.md`/`profile.yaml` directly). Verified end-to-end
+    through the actual MCP tool-call interface, not just the underlying
+    functions — caught a real gotcha doing this: a tool returning a
+    list comes back as `structured_content["result"]`, not as one JSON
+    string in `content[0].text` (that only holds a single item).
+  - The real watchlist was seeded with 3 real companies (Stripe,
+    Palantir, Ramp) to test this end-to-end — not yet confirmed with the
+    user whether to keep these or start their real watchlist fresh.
+  - 9 new pytest tests (mocked, no live network).
 
 ---
 
