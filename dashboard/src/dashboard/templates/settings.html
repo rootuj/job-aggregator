@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block content %}
+  <h1>Settings</h1>
+  <p class="hint">One item per line for list fields. Saving rewrites profile.yaml — this file is private and never shared.</p>
+
+  <form method="post" action="/settings">
+    <label>Your name
+      <input type="text" name="name" value="{{ profile.get('name', '') }}">
+    </label>
+
+    <label>Job titles you want to apply for
+      <textarea name="target_titles" rows="5">{{ profile.get('target_titles', [])|join('\n') }}</textarea>
+    </label>
+
+    <label>Seniority levels you're open to
+      <textarea name="seniority_levels" rows="4">{{ profile.get('seniority_levels', [])|join('\n') }}</textarea>
+    </label>
+
+    <label>Industries or areas of work
+      <textarea name="industries_or_lanes" rows="5">{{ profile.get('industries_or_lanes', [])|join('\n') }}</textarea>
+    </label>
+
+    <label>Locations, most preferred first
+      <textarea name="locations_ranked" rows="4">{{ profile.get('locations', {}).get('ranked', [])|join('\n') }}</textarea>
+    </label>
+
+    <label>Locations to never consider (these hide jobs entirely)
+      <textarea name="locations_exclude" rows="3">{{ profile.get('locations', {}).get('exclude', [])|join('\n') }}</textarea>
+    </label>
+
+    <label class="checkbox">
+      <input type="checkbox" name="needs_visa_sponsorship" {% if profile.get('needs_visa_sponsorship') %}checked{% endif %}>
+      I need an employer to sponsor my work visa
+    </label>
+
+    <label>Lowest yearly salary you'll consider (USD)
+      <input type="number" name="comp_floor_usd" value="{{ profile.get('comp_floor_usd', '') }}">
+    </label>
+
+    <label>Things a job must offer
+      <textarea name="must_haves" rows="4">{{ profile.get('must_haves', [])|join('\n') }}</textarea>
+    </label>
+
+    <label>Things that rule a job out
+      <textarea name="dealbreakers" rows="3">{{ profile.get('dealbreakers', [])|join('\n') }}</textarea>
+    </label>
+
+    <p class="hint">Resumes folder: {{ profile.get('resumes_folder', 'my-job-search/resumes/') }} (not editable here)</p>
+
+    <button type="submit">Save</button>
+  </form>
+{% endblock %}

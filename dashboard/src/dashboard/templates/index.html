@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block content %}
+  <h1>Today's matches</h1>
+
+  {% if pending_count %}
+    <p class="notice">{{ pending_count }} job{{ "s" if pending_count != 1 else "" }} fetched but not scored yet — ask Claude to score the pending jobs.</p>
+  {% endif %}
+
+  {% if not jobs %}
+    <p class="empty">No scored jobs yet. Run the pipeline and ask Claude to score the results.</p>
+  {% else %}
+    <table>
+      <thead>
+        <tr>
+          <th>Recommendation</th>
+          <th>Score</th>
+          <th>Title</th>
+          <th>Company</th>
+          <th>Work mode</th>
+          <th>Notes</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for job in jobs %}
+          <tr class="rec-{{ job.recommendation|replace(' ', '-') }}">
+            <td>{{ job.recommendation }}</td>
+            <td>{{ job.job_score if job.job_score is not none else "—" }} <span class="known">({{ job.criteria_known }})</span></td>
+            <td><a href="{{ job.url }}" target="_blank">{{ job.title }}</a></td>
+            <td>{{ job.company }}</td>
+            <td>{{ job.work_mode }}</td>
+            <td>
+              {% if job.overrides %}<span class="override">{{ job.overrides|join(", ") }}</span>{% endif %}
+              {{ job.notes|join("; ") }}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% endif %}
+{% endblock %}
