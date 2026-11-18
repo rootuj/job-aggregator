@@ -102,7 +102,7 @@ guessed now):
    feeds, a standard job format, deduplication, daily comparison
    (new/unchanged/edited/gone)
 5. *(done — see Current status)* **Funnel and Job Score**
-6. **Dashboard** (web app, run on the user's Mac) with a Settings tab
+6. *(done — see Current status)* **Dashboard** (web app, run on the user's Mac) with a Settings tab
 7. **9am scheduled run**
 8. **Fit Quotient and best-resume pick**
 9. **More sources and company discovery**
@@ -129,6 +129,16 @@ Job Aggregator/
 ├── rubric.example.md    — template version (committed)
 ├── setup_questions.md   — questions used to build profile.yaml
 ├── my-job-search/       — resumes + known_resumes.txt (gitignored, private)
+├── .claude/launch.json  — lets Claude preview the dashboard dev server
+├── dashboard/           — the web app (step 6), its OWN uv project — never
+│   │                      imports job_agent's Python, only reads its JSON/YAML
+│   ├── pyproject.toml
+│   ├── uv.lock
+│   └── src/dashboard/
+│       ├── config.py    — paths to job_agent's data files + profile.yaml
+│       ├── main.py      — FastAPI app: "/" (today's matches), "/settings"
+│       ├── templates/   — Jinja2 HTML (no JS framework)
+│       └── static/style.css
 └── job_agent/           — the engine (step 3+), separate from the dashboard
     ├── pyproject.toml   — project metadata + dependencies
     ├── uv.lock          — exact locked dependency versions
@@ -259,9 +269,38 @@ Job Aggregator/
     list comes back as `structured_content["result"]`, not as one JSON
     string in `content[0].text` (that only holds a single item).
   - The real watchlist was seeded with 3 real companies (Stripe,
-    Palantir, Ramp) to test this end-to-end — not yet confirmed with the
-    user whether to keep these or start their real watchlist fresh.
+    Palantir, Ramp) to test this end-to-end — confirmed kept as the
+    starting watchlist.
   - 9 new pytest tests (mocked, no live network).
+- **Step 6 is done**: the Dashboard (`dashboard/`), its own `uv` project
+  (Python 3.13, matching `job_agent`) that never imports `job_agent`'s
+  Python — it only reads `job_agent/data/scored_results.json` and
+  `job_agent/data/pending_scoring.json`, and reads/writes `profile.yaml`
+  directly, to keep the engine/dashboard separation real.
+  - **Stack choice**: FastAPI, chosen over Flask or plain stdlib for the
+    scaling context the plan already anticipates ("hosted version
+    someday") — FastAPI's async model serves more concurrent users per
+    dollar of server than Flask's synchronous one if this is ever
+    hosted; for today's single local user, the effort is about the same
+    as Flask. No separate JS framework — server-rendered Jinja2 HTML.
+  - **"/" (today's matches)**: reads `scored_results.json`, sorted
+    Strong → Maybe → Skip → not enough information, then by score. Shows
+    a "N jobs pending" notice from `pending_scoring.json`. Shows nothing
+    invented — an empty result stays empty (no padding), matching the
+    "never pads results" decision.
+  - **"/settings"**: a form over `profile.yaml`'s fields (list fields as
+    one-item-per-line textareas). **Known trade-off**: saving rewrites
+    the file with plain `yaml.safe_dump`, which does not preserve the
+    original file's helpful comments — accepted since the Settings UI's
+    own labels now explain each field instead.
+  - Run with `uv run --directory dashboard dashboard` (or via
+    `.claude/launch.json`'s "dashboard" config) → http://localhost:8420.
+  - Verified live in a real browser against real `profile.yaml` data,
+    plus 8 new pytest tests (the Settings save path tested against a
+    temp file, never the real `profile.yaml`, via `TestClient` +
+    `monkeypatch` — a real save was almost tested by just clicking the
+    button in the browser, but the auto-mode permission system
+    correctly flagged that as a destructive action on a real file).
 
 ---
 
