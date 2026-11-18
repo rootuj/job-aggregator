@@ -400,7 +400,38 @@ Job Aggregator/
     probe requests at Greenhouse/Lever/Ashby in one burst.
   - 6 new pytest tests, all against faked responses. 81 tests passing
     total. Fly.io was genuinely added to the real watchlist by this
-    testing — not yet confirmed with the user whether to keep it.
+    testing — confirmed kept as part of the watchlist.
+- **Real bug found and fixed, post-step-9, via an actual live demo**:
+  the Funnel's top-20 cutoff ranked candidates by Fit Quotient *alone*,
+  which has zero awareness of title precision or location. Live against
+  Stripe's real 792 jobs: "Head of AMER Startups (AI Sales)" — an
+  irrelevant Sales role sharing only the generic word "Head" with
+  `target_titles` — outranked all 42 of the real, 35+ of them explicitly
+  remote, Product Manager roles on Fit Quotient (31.6 vs 12.9–30.7), and
+  **none of those 42 survived the top-20 cutoff.** Caught only because
+  the user pushed back hard on a demo result that didn't match their
+  gut sense, and asked for the actual numbers rather than accepting the
+  explanation.
+  - **Fix**: `funnel.py`'s ranking now blends Fit Quotient with two new
+    signals — `title_match_strength` (word-overlap *count* with the
+    best-matching target title, not just "shares one word" from the
+    pre-filter) and `location_rank_bonus` (a rough bonus from
+    `profile.yaml`'s `locations.ranked`, same point scale as `rubric.md`'s
+    own Location fit — NOT the full judgment-based exclusion rubric.md
+    does, which still stays with the model). `prefilter_by_title` and
+    `title_matches` are unchanged — this only changes ranking *after*
+    that filter, not what survives it.
+  - **Verified the fix live**, same real Stripe data: the new top 20 is
+    now almost entirely genuine, mostly-remote Product Manager roles;
+    every irrelevant "Head of X" Sales/Finance/Marketing role is gone.
+  - 9 new pytest tests, including a regression test using the real
+    numbers from this bug (a realistic ~10-point Fit Quotient gap, not
+    an exaggerated one) to make sure this can't silently regress. 88
+    tests passing total. Re-ran the real pipeline afterward to refresh
+    `pending_scoring.json` with the corrected ranking.
+  - **Also fixed while demoing**: the dashboard's table wrapped titles
+    badly on narrow viewports instead of scrolling horizontally, plus a
+    stylesheet caching issue.
 
 ---
 

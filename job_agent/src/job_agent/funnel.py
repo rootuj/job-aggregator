@@ -8,14 +8,25 @@ Two code-only stages, in order:
    full job description costs one extra request PER job (see
    jobs.fetch_workday_description), so filtering by title FIRST avoids
    doing that for jobs that are obviously irrelevant.
-2. Fit Quotient: a resume/JD keyword-overlap percentage, computed only
-   for jobs that survived stage 1. The top ~N by Fit Quotient move on to
-   Job Score, which the model computes itself from rubric.md — not here.
+2. Ranking: the top ~N candidates move on to Job Score, which the model
+   computes itself from rubric.md — not here. Found live (NVIDIA... no,
+   Stripe): ranking by Fit Quotient alone is a bad proxy for "worth
+   scoring" — it has zero awareness of title precision or location, so
+   an irrelevant "Head of AMER Startups (AI Sales)" (fit 31.6, shares
+   only the generic word "Head" with target_titles) outranked 35+ of 42
+   genuine, several explicitly remote, Product Manager roles (fit 12-30)
+   and NONE of those 35+ survived the cutoff. The combined rank below
+   blends Fit Quotient with title-match STRENGTH (word-overlap count,
+   not just "shares one word") and a location-rank bonus, so a job
+   matching your title and your #1 location can't be buried by one that
+   merely shares a generic word and happens to score slightly higher on
+   keyword overlap.
 
-Location filtering is deliberately NOT done here. rubric.md's own
-"Location rules" require judgment (e.g. telling whether a remote job is
-actually restricted to a non-US country) that simple code can't reliably
-make — that stays with the model, at Job Score time.
+Full location EXCLUSION is still deliberately NOT done here. rubric.md's
+own "Location rules" require judgment (e.g. telling whether a remote job
+is actually restricted to a non-US country) that simple code can't
+reliably make — that stays with the model, at Job Score time. The bonus
+below is a rough ranking aid, not that final judgment.
 """
 
 from __future__ import annotations
@@ -125,6 +136,51 @@ def best_fit_quotient(resumes: dict[str, set[str]], job: Job) -> tuple[str | Non
     return best_resume, best_score
 
 
+def title_match_strength(job_title: str, target_titles: list[str]) -> int:
+    """How many meaningful words a job's title shares with its best-matching
+    target title — e.g. "Product Manager, Radar" shares 2 words ("product",
+    "manager") with "Principal Product Manager", while "Head of AMER
+    Startups" shares only 1 ("head") with "Head of Product". Unlike
+    title_matches (a yes/no pre-filter), this is a ranking signal."""
+    job_words = _words(job_title)
+    if not job_words or not target_titles:
+        return 0
+    return max(len(job_words & _words(target)) for target in target_titles)
+
+
+_LOCATION_RANK_POINTS = [20, 18, 15, 10]  # same scale as rubric.md's own Location fit scoring
+_LOCATION_RANK_POINTS_DEFAULT = 6  # 5th-ranked-or-later match
+
+
+def location_rank_bonus(location_text: str | None, ranked_locations: list[str]) -> int:
+    """A rough ranking bonus from profile.yaml's locations.ranked — NOT the
+    full judgment-based Location fit rubric.md computes (which handles
+    "remote restricted to another country" etc.); this only exists so a
+    job matching your #1 preferred location doesn't get buried in the
+    Funnel's ranking before it ever reaches that real judgment call."""
+    if not location_text or not ranked_locations:
+        return 0
+    location_words = _words(location_text)
+    is_remote = "remote" in location_text.lower()
+    for i, ranked in enumerate(ranked_locations):
+        points = _LOCATION_RANK_POINTS[i] if i < len(_LOCATION_RANK_POINTS) else _LOCATION_RANK_POINTS_DEFAULT
+        if "remote" in ranked.lower() and is_remote:
+            return points
+        if _words(ranked) & location_words:
+            return points
+    return 0
+
+
+def _funnel_rank(job: Job, fit: float | None, profile: dict) -> float:
+    """Combines Fit Quotient with title-match strength and a location
+    bonus — see the module docstring for why Fit Quotient alone isn't
+    enough. Weights are chosen so a strong title+location match can
+    outrank a merely-higher-Fit-Quotient irrelevant job."""
+    title_component = title_match_strength(job.title, profile.get("target_titles") or []) * 15
+    location_component = location_rank_bonus(job.location, profile.get("locations", {}).get("ranked") or [])
+    return (fit or 0) + title_component + location_component
+
+
 def run_funnel(
     company: Company,
     jobs: list[Job],
@@ -133,15 +189,16 @@ def run_funnel(
     client: httpx.Client,
     top_n: int = 20,
 ) -> list[tuple[Job, str | None, float | None]]:
-    """Title pre-filter -> backfill descriptions -> best-resume Fit Quotient -> top N.
+    """Title pre-filter -> backfill descriptions -> rank -> top N.
 
-    Returns (job, best_resume, fit_quotient) triples, highest score first.
-    A job with no description (Fit Quotient None) sorts last, never
-    padding the results.
+    Returns (job, best_resume, fit_quotient) triples, ranked by a
+    combined score (see _funnel_rank), not Fit Quotient alone. A job
+    with no description (Fit Quotient None) sorts last, never padding
+    the results.
     """
     survivors = prefilter_by_title(jobs, profile.get("target_titles") or [])
     survivors = [ensure_description(job, company, client) for job in survivors]
 
     scored = [(job, *best_fit_quotient(resumes, job)) for job in survivors]
-    scored.sort(key=lambda triple: (triple[2] is None, -(triple[2] or 0)))
+    scored.sort(key=lambda triple: (triple[2] is None, -_funnel_rank(triple[0], triple[2], profile)))
     return scored[:top_n]
