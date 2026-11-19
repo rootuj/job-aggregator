@@ -15,14 +15,19 @@ from pathlib import Path
 import httpx
 
 from job_agent.funnel import load_profile, load_resumes, run_funnel
-from job_agent.jobs import dedup_jobs, fetch_jobs
+from job_agent.jobs import fetch_jobs
+from job_agent.scoring import DEFAULT_SCORED_RESULTS_PATH, prune_stale_scores
 from job_agent.tracking import diff_jobs, load_state, save_state
 from job_agent.watchlist import load_watchlist
 
 DEFAULT_PENDING_SCORING_PATH = Path(__file__).resolve().parent.parent.parent / "data" / "pending_scoring.json"
 
 
-def run_pipeline(top_n_per_company: int = 20, pending_path: Path = DEFAULT_PENDING_SCORING_PATH) -> dict:
+def run_pipeline(
+    top_n_per_company: int = 20,
+    pending_path: Path = DEFAULT_PENDING_SCORING_PATH,
+    scored_path: Path = DEFAULT_SCORED_RESULTS_PATH,
+) -> dict:
     """Run the full pipeline across every watchlisted company.
 
     Returns a summary dict; writes the candidate list awaiting Job Score
@@ -46,7 +51,7 @@ def run_pipeline(top_n_per_company: int = 20, pending_path: Path = DEFAULT_PENDI
                 continue
 
             previous_state = load_state(company.name)
-            new_state, changes = diff_jobs(company.name, dedup_jobs(jobs), previous_state)
+            new_state, changes = diff_jobs(company.name, jobs, previous_state)
             save_state(company.name, new_state)
             changes_by_id = {c.job.external_id: c for c in changes}
 
@@ -67,9 +72,12 @@ def run_pipeline(top_n_per_company: int = 20, pending_path: Path = DEFAULT_PENDI
     pending_path.parent.mkdir(parents=True, exist_ok=True)
     pending_path.write_text(json.dumps(candidates, indent=2))
 
+    pruned = prune_stale_scores(candidates, path=scored_path)
+
     return {
         "companies_checked": len(companies),
         "candidates_found": len(candidates),
         "errors": errors,
         "pending_scoring_path": str(pending_path),
+        "pruned_stale_scores": pruned,
     }

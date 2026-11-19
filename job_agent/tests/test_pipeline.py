@@ -2,6 +2,7 @@ import json
 
 import job_agent.pipeline as pipeline_module
 from job_agent.jobs import Job
+from job_agent.scoring import load_scored_results, record_score
 from job_agent.watchlist import Company
 
 
@@ -22,13 +23,16 @@ def test_run_pipeline_writes_candidates_with_change_and_fit_info(tmp_path, monke
     monkeypatch.setattr(pipeline_module, "fetch_jobs", lambda company, client=None: [job])
 
     pending_path = tmp_path / "pending.json"
-    summary = pipeline_module.run_pipeline(top_n_per_company=5, pending_path=pending_path)
+    summary = pipeline_module.run_pipeline(
+        top_n_per_company=5, pending_path=pending_path, scored_path=tmp_path / "scored.json"
+    )
 
     assert summary == {
         "companies_checked": 1,
         "candidates_found": 1,
         "errors": [],
         "pending_scoring_path": str(pending_path),
+        "pruned_stale_scores": [],
     }
     data = json.loads(pending_path.read_text())
     assert data[0]["title"] == "Engineer"
@@ -44,7 +48,9 @@ def test_run_pipeline_skips_companies_with_no_ats_detected(tmp_path, monkeypatch
     _setup_common(monkeypatch)
     monkeypatch.setattr(pipeline_module, "load_watchlist", lambda: [company])
 
-    summary = pipeline_module.run_pipeline(pending_path=tmp_path / "pending.json")
+    summary = pipeline_module.run_pipeline(
+        pending_path=tmp_path / "pending.json", scored_path=tmp_path / "scored.json"
+    )
 
     assert summary["companies_checked"] == 1
     assert summary["candidates_found"] == 0
@@ -67,8 +73,34 @@ def test_run_pipeline_keeps_going_after_one_companys_fetch_fails(tmp_path, monke
 
     monkeypatch.setattr(pipeline_module, "fetch_jobs", fake_fetch)
 
-    summary = pipeline_module.run_pipeline(pending_path=tmp_path / "pending.json")
+    summary = pipeline_module.run_pipeline(
+        pending_path=tmp_path / "pending.json", scored_path=tmp_path / "scored.json"
+    )
 
     assert summary["companies_checked"] == 2
     assert summary["candidates_found"] == 1
     assert "Broken" in summary["errors"][0]
+
+
+def test_run_pipeline_prunes_scores_for_jobs_no_longer_candidates(tmp_path, monkeypatch):
+    company = Company(name="X", careers_url="x", ats="greenhouse", slug="x", board_url="u")
+    job = Job(external_id="1", company="X", ats="greenhouse", title="Still Current", location=None,
+              url="u1", description="python")
+
+    _setup_common(monkeypatch, resumes={"a.md": {"python"}})
+    monkeypatch.setattr(pipeline_module, "load_watchlist", lambda: [company])
+    monkeypatch.setattr(pipeline_module, "fetch_jobs", lambda company, client=None: [job])
+
+    scored_path = tmp_path / "scored.json"
+    record_score(company="X", external_id="1", title="Still Current", url="u1", job_score=80,
+                 criteria_known="5 of 5", work_mode="unknown", overrides=[], notes=[],
+                 recommendation="Strong", path=scored_path)
+    record_score(company="X", external_id="gone", title="No Longer A Candidate", url="u2", job_score=35,
+                 criteria_known="3 of 5", work_mode="unknown", overrides=[], notes=[],
+                 recommendation="Skip", path=scored_path)
+
+    summary = pipeline_module.run_pipeline(pending_path=tmp_path / "pending.json", scored_path=scored_path)
+
+    assert summary["pruned_stale_scores"] == ["No Longer A Candidate"]
+    remaining = load_scored_results(scored_path)
+    assert set(remaining.keys()) == {"X::1"}

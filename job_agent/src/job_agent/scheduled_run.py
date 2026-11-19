@@ -15,10 +15,13 @@ def main() -> None:
     print(
         f"[{timestamp}] {summary['companies_checked']} companies checked, "
         f"{summary['candidates_found']} candidates found, "
-        f"{len(summary['errors'])} errors"
+        f"{len(summary['errors'])} errors, "
+        f"{len(summary['pruned_stale_scores'])} stale scores pruned"
     )
     for error in summary["errors"]:
         print(f"  ERROR: {error}")
+    for title in summary["pruned_stale_scores"]:
+        print(f"  PRUNED: {title}")
 
 
 if __name__ == "__main__":

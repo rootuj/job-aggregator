@@ -448,6 +448,24 @@ Job Aggregator/
   exact-id dedup, so every caller (pipeline, tracking) benefits without
   changes elsewhere. 5 new pytest tests; 93 tests passing total. Re-ran
   the real pipeline afterward.
+- **Stale scored jobs now get pruned automatically.** Found live, right
+  after the ranking fix: a job the model scored once stayed on the
+  dashboard forever — nothing ever removed it from `scored_results.json`,
+  even after a job fell out of the current candidate pool entirely (the
+  Stripe Sales role from the ranking-fix demo had zero matches in a
+  fresh pipeline run, yet was still showing as "Skip" on the dashboard).
+  `scoring.prune_stale_scores` removes any scored entry whose
+  `(company, external_id)` isn't in the latest `pending_scoring.json` —
+  whether the job actually closed or simply didn't rank into today's
+  top N — and now runs automatically at the end of every
+  `run_pipeline()` call, so it happens on the real 9am schedule too, not
+  just when asked. `scheduled_run.py`'s log line now reports how many
+  were pruned, and each pruned title. Verified live: added a
+  deliberately fake stale score, confirmed the next real pipeline run
+  removed it and logged `PRUNED: A Fake Stale Job`. Also cleaned up a
+  now-redundant `dedup_jobs` call in `pipeline.py` (`fetch_jobs` already
+  dedupes internally since the location-merge fix). 7 new pytest tests;
+  97 tests passing total.
 
 ---
 

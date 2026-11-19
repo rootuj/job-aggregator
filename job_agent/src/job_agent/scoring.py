@@ -77,3 +77,29 @@ def record_score(
     results[_key(company, external_id)] = scored
     save_scored_results(results, path)
     return scored
+
+
+def prune_stale_scores(
+    current_candidates: list[dict], path: Path = DEFAULT_SCORED_RESULTS_PATH
+) -> list[str]:
+    """Remove scored jobs that are no longer in the current candidate pool
+    — whether because the job actually closed, or it simply didn't rank
+    into today's top N. Found live: a scored job can otherwise sit on the
+    dashboard forever, since nothing else ever removes it, even after a
+    Funnel fix makes clear it never should have been a candidate at all.
+
+    Call this after writing a fresh pending_scoring.json (pipeline.py
+    does, on every run) so "today's matches" actually means today's.
+    Returns the titles of whatever got pruned.
+    """
+    results = load_scored_results(path)
+    current_keys = {_key(c["company"], c["external_id"]) for c in current_candidates}
+
+    stale_keys = [key for key in results if key not in current_keys]
+    pruned_titles = [results[key].title for key in stale_keys]
+    for key in stale_keys:
+        del results[key]
+
+    if stale_keys:
+        save_scored_results(results, path)
+    return pruned_titles
